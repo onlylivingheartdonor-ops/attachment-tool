@@ -1,9 +1,7 @@
-"use client"
-
-import { useState, useRef } from "react"
+import AttachmentSizeChecker from "./AttachmentSizeChecker"
 import { RELATED_LINKS as RELATED } from "./lib/links"
 
-const css = `
+const staticCss = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&display=swap');
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #faf8f4; font-family: 'DM Mono', monospace; color: #1a1a1a; }
@@ -61,11 +59,19 @@ const css = `
   .eas-info-item { padding: .75rem; border-left: 2px solid #c8d8e8; }
   .eas-info-title { font-size: 12px; font-weight: 500; color: #1a1a1a; margin-bottom: .25rem; }
   .eas-info-body { font-size: 12px; color: #888; line-height: 1.5; }
+  .eas-faq-item { border-bottom: 1px solid #e0dbd3; padding: 1rem 0; }
+  .eas-faq-item:last-child { border-bottom: none; padding-bottom: 0; }
+  .eas-faq-q { font-size: 13px; font-weight: 500; color: #1a1a1a; margin-bottom: .4rem; }
+  .eas-faq-a { font-size: 13px; color: #555; line-height: 1.7; }
   .eas-alt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
   .eas-alt-num { font-family: 'DM Serif Display', serif; font-size: 2rem; color: #c8d8e8; line-height: 1; margin-bottom: .4rem; }
   .eas-alt-title { font-size: 12px; font-weight: 500; color: #1a1a1a; margin-bottom: .25rem; }
   .eas-alt-body { font-size: 12px; color: #888; line-height: 1.5; }
+  .sub-nav { font-size: 12px; margin-bottom: 1.5rem; }
+  .sub-nav a { color: #1a5ca8; text-decoration: none; }
+  .sub-nav a:hover { text-decoration: underline; }
   .eas-related-links { display: flex; flex-wrap: wrap; gap: .5rem; }
+  .eas-related-label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #888; margin-bottom: .75rem; }
   .eas-related-link { font-size: 12px; padding: .35rem .75rem; border: 1px solid #e0dbd3; border-radius: 2px; color: #555; text-decoration: none; transition: all .15s; display: inline-block; }
   .eas-related-link:hover { border-color: #1a1a1a; color: #1a1a1a; }
   .eas-disclaimer { font-size: 11px; color: #888; line-height: 1.6; border-top: 1px solid #e0dbd3; padding-top: 1rem; margin-top: 1rem; }
@@ -76,141 +82,59 @@ const css = `
   }
 `
 
-const PROVIDERS = [
-  { name: "Gmail",       limit: 25, note: "25 MB limit" },
-  { name: "Outlook",     limit: 20, note: "20 MB limit" },
-  { name: "Yahoo Mail",  limit: 25, note: "25 MB limit" },
-  { name: "iCloud Mail", limit: 20, note: "20 MB limit" },
+const FAQ = [
+  {
+    q: "Why does my file sometimes fail even when it's under the size limit?",
+    a: "Email providers use MIME encoding to convert binary files into text that can travel over email networks. This encoding adds roughly 33% to the effective file size. A 19 MB file might become ~25 MB after encoding — enough to push it over Gmail's 25 MB limit. This tool shows both the raw and encoded sizes so you know exactly where you stand."
+  },
+  {
+    q: "Do email providers have the same attachment limits for sending and receiving?",
+    a: "Not always. Most providers have lower limits for receiving than sending, especially for corporate email systems. Gmail can receive up to 50 MB, but that requires the sender to use Google Drive integration. Outlook.com can receive up to 20 MB. When in doubt, use a cloud sharing link for files over 15 MB."
+  },
+  {
+    q: "What is MIME encoding and why does it matter?",
+    a: "MIME (Multipurpose Internet Mail Extensions) encoding converts binary file data into text format that email systems can safely handle. The most common encoding, Base64, increases file size by about 33%. Email providers check the encoded size — not your original file size — when enforcing attachment limits."
+  },
+  {
+    q: "Can I send files larger than the limit by using multiple emails?",
+    a: "Yes — splitting a large file across two or more emails works, but it's inconvenient for the recipient who must reassemble the pieces. Cloud storage links (Google Drive, Dropbox, OneDrive) or dedicated file transfer services (WeTransfer, Send Anywhere) are usually better options for files that significantly exceed size limits."
+  },
+  {
+    q: "Why do Outlook and iCloud Mail have lower limits (20 MB) than Gmail and Yahoo (25 MB)?",
+    a: "Each provider sets its own infrastructure policies. Microsoft (Outlook) and Apple (iCloud) historically set 20 MB limits and have maintained them, while Google increased Gmail's limit from 25 MB to 50 MB for receiving (but not sending) and Yahoo remains at 25 MB. These limits can change — check provider documentation for current figures."
+  },
+  {
+    q: "Do attachment limits apply to the entire message or just individual files?",
+    a: "Provider limits apply to the total size of all attachments combined, not each file individually. For example, three 8 MB files total 24 MB — acceptable for Gmail but not for Outlook. Always check the combined size of everything you're attaching, not just the largest single file."
+  }
 ]
 
-function getStatus(encodedMB) {
-  if (encodedMB <= 20) return { key: "safe", title: "Good to go", msg: "This file should send successfully with all major email providers." }
-  if (encodedMB <= 25) return { key: "warn", title: "Borderline", msg: "This file may work with Gmail or Yahoo Mail (25 MB limit) but will likely fail with Outlook and iCloud Mail (20 MB limit)." }
-  return { key: "fail", title: "Too large for email", msg: "This file exceeds the attachment limits of all major providers. Consider sharing via cloud link or compressing the file first." }
-}
-
 export default function Page() {
-  const [fileSize, setFileSize]       = useState("")
-  const [fileName, setFileName]       = useState("")
-  const [result, setResult]           = useState(null)
-  const [providers, setProviders]     = useState([])
-  const [drag, setDrag]               = useState(false)
-  const fileRef                       = useRef()
-
-  const encoded = (mb) => parseFloat((mb * 1.33).toFixed(2))
-
-  const runCheck = (mb) => {
-    const enc = encoded(mb)
-    setResult({ ...getStatus(enc), rawMB: mb, encMB: enc })
-    setProviders(PROVIDERS.map(p => ({ ...p, pass: enc <= p.limit })))
-  }
-
-  const handleManual = () => {
-    const mb = parseFloat(fileSize)
-    if (!mb || mb <= 0) return
-    runCheck(mb)
-  }
-
-  const handleFile = (file) => {
-    if (!file) return
-    const mb = parseFloat((file.size / (1024 * 1024)).toFixed(2))
-    setFileName(file.name)
-    setFileSize(mb)
-    runCheck(mb)
-  }
-
-  const handleUpload = (e) => handleFile(e.target.files[0])
-  const handleDrop = (e) => { e.preventDefault(); setDrag(false); handleFile(e.dataTransfer.files[0]) }
-
   return (
     <>
-      <style>{css}</style>
+      <style dangerouslySetInnerHTML={{ __html: staticCss }} />
       <main className="eas-wrap">
+
+        <p className="sub-nav"><a href="https://moneywisecalculator.com">← More free tools at MoneyWise Calculator</a></p>
 
         <div className="eas-header">
           <p className="eas-eyebrow">Email Utilities</p>
           <h1 className="eas-title">Attachment<br /><em>Size Checker</em></h1>
         </div>
 
-        {/* TOOL */}
-        <div className="eas-card">
-          <div className="eas-field-block">
-            <label className="eas-field-label" htmlFor="filesize">Enter file size manually</label>
-            <div className="eas-input-wrap">
-              <input
-                id="filesize"
-                className="eas-input"
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="0.00"
-                value={fileSize}
-                onChange={e => setFileSize(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && handleManual()}
-              />
-            </div>
-            <p className="eas-field-hint">Enter the size of your file in megabytes (MB)</p>
-          </div>
+        <p style={{ fontSize: "13px", color: "#555", lineHeight: "1.7", marginBottom: "1.5rem" }}>
+          Free tool to check if your file can be sent as an email attachment. Enter a file size or drop a file to see which providers will accept it — accounting for MIME encoding automatically.
+        </p>
 
-          <div className="eas-or">or</div>
-
-          <div
-            className={"eas-upload-zone" + (drag ? " drag" : "")}
-            onClick={() => fileRef.current.click()}
-            onDragOver={e => { e.preventDefault(); setDrag(true) }}
-            onDragLeave={() => setDrag(false)}
-            onDrop={handleDrop}
-          >
-            <div className="eas-upload-icon">&#8679;</div>
-            <p className="eas-upload-label">Drop a file here or click to browse</p>
-            <p className="eas-upload-sub">File is read locally — nothing is uploaded</p>
-            <input ref={fileRef} type="file" style={{ display: "none" }} onChange={handleUpload} />
-          </div>
-
-          {fileName && (
-            <div className="eas-file-preview">
-              <span className="eas-file-icon">&#9783;</span>
-              <span className="eas-file-name">{fileName}</span>
-              <span className="eas-file-size">{fileSize} MB</span>
-            </div>
-          )}
-
-          <button className="eas-btn" onClick={handleManual}>Check attachment size →</button>
-
-          {result && (
-            <>
-              <div className={"eas-result-banner " + result.key}>
-                <p className="eas-result-title">{result.title}</p>
-                <p className="eas-result-sub">{result.msg}</p>
-                <p className="eas-encoding-note">
-                  Raw size: {result.rawMB} MB · After email encoding: ~{result.encMB} MB
-                  (attachments grow ~33% during MIME encoding)
-                </p>
-              </div>
-
-              <div className="eas-providers">
-                {providers.map((p, i) => (
-                  <div className="eas-provider" key={i}>
-                    <div>
-                      <p className="eas-provider-name">{p.name}</p>
-                      <p className="eas-provider-limit">{p.note}</p>
-                    </div>
-                    <span className={"eas-pill " + (p.pass ? "pass" : "fail")}>
-                      {p.pass ? "Will send" : "Too large"}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+        {/* INTERACTIVE TOOL — client component */}
+        <AttachmentSizeChecker />
 
         {/* HOW IT WORKS */}
         <div className="eas-card">
           <p className="eas-section-title">How this works</p>
           <div className="eas-prose">
             <p>Email providers cap the total size of attachments you can send in a single message. When you enter a file size — or drop a file directly — this tool compares it against the limits used by Gmail, Outlook, Yahoo Mail, and iCloud Mail.</p>
-            <p>It also accounts for MIME encoding, the process email systems use to convert binary files into a format that can travel over email networks. This encoding adds approximately 33% to the effective file size. A 15 MB file, for example, becomes roughly 20 MB by the time it reaches the provider&apos;s size check — which is why files that seem just under the limit sometimes still fail.</p>
+            <p>It also accounts for MIME encoding, the process email systems use to convert binary files into a format that can travel over email networks. This encoding adds approximately 33% to the effective file size. A 15 MB file, for example, becomes roughly 20 MB by the time it reaches the provider's size check — which is why files that seem just under the limit sometimes still fail.</p>
             <p>Surfacing the encoded size gives you a realistic picture of whether your file will go through before you try to send it.</p>
           </div>
           <div className="eas-info-grid">
@@ -228,22 +152,22 @@ export default function Page() {
             </div>
             <div className="eas-info-item">
               <p className="eas-info-title">Recipient limits</p>
-              <p className="eas-info-body">Your recipient&apos;s inbox may have a lower incoming limit than your sending provider allows. When in doubt, use a link instead.</p>
+              <p className="eas-info-body">Your recipient's inbox may have a lower incoming limit than your sending provider allows. When in doubt, use a link instead.</p>
             </div>
           </div>
         </div>
 
-        {/* WHY USEFUL */}
+        {/* WHY IT MATTERS */}
         <div className="eas-card">
-          <p className="eas-section-title">Why this is useful</p>
+          <p className="eas-section-title">Why attachment size matters</p>
           <div className="eas-prose">
-            <p>Attachment failures are frustratingly invisible. Most email clients don&apos;t display size limits upfront, and when a message bounces, the error message is often vague or arrives minutes after sending — by which point the recipient may already be expecting it.</p>
+            <p>Attachment failures are frustratingly invisible. Most email clients don't display size limits upfront, and when a message bounces, the error message is often vague or arrives minutes after sending — by which point the recipient may already be expecting it.</p>
             <p>Checking in advance takes seconds and removes the guesswork entirely. This is especially useful when sending large work documents, design files, reports, or presentations where timing matters and a failed delivery creates friction.</p>
             <p>It also encourages better habits: understanding why files fail helps you choose the right sending method from the start, rather than troubleshooting after the fact.</p>
           </div>
         </div>
 
-        {/* IF TOO LARGE */}
+        {/* WHAT TO DO IF TOO LARGE */}
         <div className="eas-card">
           <p className="eas-section-title">If your file is too large</p>
           <div className="eas-prose">
@@ -253,7 +177,7 @@ export default function Page() {
             <div>
               <p className="eas-alt-num">01</p>
               <p className="eas-alt-title">Share via cloud storage</p>
-              <p className="eas-alt-body">Upload to Google Drive, Dropbox, or OneDrive and share a link instead. No size restrictions, and the recipient doesn&apos;t need an account to view most files.</p>
+              <p className="eas-alt-body">Upload to Google Drive, Dropbox, or OneDrive and share a link instead. No size restrictions, and the recipient doesn't need an account to view most files.</p>
             </div>
             <div>
               <p className="eas-alt-num">02</p>
@@ -273,9 +197,9 @@ export default function Page() {
           </div>
         </div>
 
-        {/* PREVENTION */}
+        {/* HOW TO AVOID ISSUES */}
         <div className="eas-card">
-          <p className="eas-section-title">How to avoid attachment issues in the future</p>
+          <p className="eas-section-title">How to avoid attachment issues</p>
           <div className="eas-prose">
             <p>Most attachment problems are preventable with a small amount of preparation. The most common causes are uncompressed images, embedded media in documents, and sending multiple large files in one message.</p>
             <ul>
@@ -283,36 +207,40 @@ export default function Page() {
               <li>Export PDFs from design tools at screen resolution rather than print resolution when the recipient only needs to read, not print</li>
               <li>Use cloud links as your default for anything over 10 MB, rather than treating email as a file delivery system</li>
               <li>When sending multiple files, check the combined size — not just the individual files</li>
-              <li>Be aware that your recipient&apos;s inbox provider may have stricter limits than yours, particularly corporate email systems</li>
+              <li>Be aware that your recipient's inbox provider may have stricter limits than yours, particularly corporate email systems</li>
             </ul>
-            <p>Getting into the habit of checking file size before sending — rather than after a bounce — saves time and avoids awkward follow-up messages explaining why something didn&apos;t arrive.</p>
+            <p>Getting into the habit of checking file size before sending — rather than after a bounce — saves time and avoids awkward follow-up messages explaining why something didn't arrive.</p>
           </div>
         </div>
 
-        {/* ========== MONEYWISE LINK — START ========== */}
-        <div style={{ background: "#fff", border: "1px solid #e0dbd3", borderRadius: "4px", padding: "1rem 1.5rem", marginBottom: "1.5rem", textAlign: "center" }}>
-          <p style={{ fontFamily: "'DM Mono', monospace", fontSize: "13px", color: "#888" }}>
-            Looking for more free financial tools?{" "}
-            <a href="https://moneywisecalculator.com" style={{ color: "#b45309", textDecoration: "underline" }}>
-              Visit MoneyWiseCalculator.com
-            </a>
-          </p>
+        {/* FAQ */}
+        <div className="eas-card">
+          <p className="eas-section-title">Frequently asked questions</p>
+          {FAQ.map((item, i) => (
+            <div className="eas-faq-item" key={i}>
+              <p className="eas-faq-q">{item.q}</p>
+              <p className="eas-faq-a">{item.a}</p>
+            </div>
+          ))}
         </div>
-        {/* ========== MONEYWISE LINK — END ========== */}
 
         {/* RELATED TOOLS */}
         <div className="eas-card">
           <p className="eas-section-title">Related tools</p>
+          <p className="eas-related-label">More free tools from the MoneyWise Calculator network</p>
           <div className="eas-related-links">
             {RELATED.map((r, i) => (
               <a key={i} className="eas-related-link" href={r.href}>{r.label}</a>
             ))}
           </div>
           <div className="eas-disclaimer">
-            This tool reads file size locally in your browser. No data is uploaded or stored. Provider limits are based on publicly available information and may change.
+            This tool reads file size locally in your browser. No data is uploaded or stored. Provider limits are based on publicly available information and may change. This site uses cookies and analytics. By using this site, you agree to our{" "}
+            <a href="/privacy" style={{ color: "#888" }}>Privacy Policy</a> and{" "}
+            <a href="/terms" style={{ color: "#888" }}>Terms of Service</a>.
             <div className="eas-footer-links">
               <a href="/privacy">Privacy Policy</a>
               <a href="/terms">Terms of Service</a>
+              <a href="https://moneywisecalculator.com">MoneyWise Calculator</a>
             </div>
           </div>
         </div>
