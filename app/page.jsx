@@ -114,6 +114,7 @@ export default function Page() {
     <>
       <style dangerouslySetInnerHTML={{ __html: staticCss }} />
       <main className="eas-wrap">
+        <p className="sub-nav"><a href="https://moneywisecalculator.com">← More free tools at MoneyWise Calculator</a></p>
 
         <p className="sub-nav"><a href="https://moneywisecalculator.com">← More free tools at MoneyWise Calculator</a></p>
 
